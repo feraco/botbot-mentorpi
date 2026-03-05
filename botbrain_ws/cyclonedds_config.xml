@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CycloneDDS Network Interface Priority Configuration
+  ====================================================
+  Priorities determine which interface DDS uses for multicast/unicast traffic.
+  Higher number = higher priority = preferred interface.
+
+  Interface order and priorities:
+    lo    (100) - loopback, always present, highest priority for local comms
+    wlan0  (50) - WiFi interface, PRIMARY network for ROS2 DDS traffic
+    eth0   (10) - Ethernet, optional/secondary (presence_required=false)
+
+  IMPORTANT: wlan0 must be higher priority than eth0.
+  If eth0 is higher, DDS uses Ethernet when a cable is plugged in,
+  breaking map updates and odometry when the UI is accessed over WiFi.
+  See docs/NETWORK_SETUP.md for full explanation.
+-->
+<CycloneDDS>
+  <Domain>
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo" priority="100" multicast="true" />
+        <NetworkInterface name="wlan0" priority="50" multicast="true" presence_required="false" />
+        <NetworkInterface name="eth0" priority="10" multicast="true" presence_required="false" />
+      </Interfaces>
+    </General>
+  </Domain>
+</CycloneDDS>

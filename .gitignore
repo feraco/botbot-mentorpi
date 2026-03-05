@@ -1,0 +1,41 @@
+# Environment variables
+.env
+.env.local
+.env.production
+.env.development
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Directories managed by the ROS2 build system
+botbrain_ws/build
+botbrain_ws/install
+botbrain_ws/log
+
+# Next.js build output (built on-device by installer)
+frontend/.next/
+frontend/out/
+frontend/build/
+
+# Node.js
+frontend/node_modules/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+/tmp/install_log.txt
+*.tmp
+*.bak
+
+# Docker
+.docker/

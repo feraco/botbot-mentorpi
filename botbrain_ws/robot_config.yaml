@@ -1,0 +1,18 @@
+robot_configuration:
+  robot_name: ""
+  robot_model: ""
+  description_file_type: ""
+  network_interface: ""
+  tita_namespace: ""
+  openai_api_key: ""
+  wifi_interface: ""
+  wifi_ssid: ""
+  wifi_password: ""
+  default_map: ""
+  lidar_model: ""
+  lidar_port: ""
+  camera_device: ""
+  camera_topic: "front_camera/color/image_raw"
+  camera_width: 640
+  camera_height: 480
+  camera_fps: 30
