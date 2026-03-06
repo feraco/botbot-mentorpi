@@ -51,10 +51,17 @@ def generate_launch_description():
             # ICP settings matching RTABMap
             'Icp/VoxelSize': '0.05',
             'Icp/PointToPlane': 'false',
-            'Icp/Iterations': '10',
-            'Icp/MaxCorrespondenceDistance': '0.5',
+            'Icp/Iterations': '30',
+            'Icp/MaxCorrespondenceDistance': '1.0',
             'Icp/CorrespondenceRatio': '0.2',
             'Odom/ScanKeyFrameThr': '0.9',
+            # Auto-reset the ICP reference after 1 consecutive failure so the
+            # node recovers immediately after a fast turn or sudden motion,
+            # instead of staying permanently stuck in the lost-odometry state.
+            'Odom/ResetCountdown': '1',
+            # Use TF from wheel odometry as the initial transformation guess.
+            # This dramatically improves tracking during fast motion.
+            'guess_frame_id': odom_frame,
         }],
         remappings=[
             ('scan', scan_topic),
