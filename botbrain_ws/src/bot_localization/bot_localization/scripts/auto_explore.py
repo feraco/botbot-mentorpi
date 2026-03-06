@@ -32,6 +32,7 @@ SAFETY_DISTANCE     = 0.45   # m    — front clearance to trigger avoidance
 FRONT_HALF_ANG_DEG  = 30     # °    — half-width of the "front" detection cone
 MIN_ROTATE_TIME     = 0.4    # s    — minimum rotation before checking if path is clear
 MAX_ROTATE_TIME     = 5.0    # s    — give up on a direction and re-choose after this long
+BODY_CLEARANCE      = 0.12   # m    — ignore readings closer than this (robot's own chassis)
 # ─────────────────────────────────────────────────────────────────────────── #
 
 
@@ -48,7 +49,7 @@ def _sector_min(msg: LaserScan, start_deg: float, end_deg: float) -> float:
     for i, r in enumerate(msg.ranges):
         if math.isnan(r) or math.isinf(r):
             continue
-        if not (msg.range_min < r < msg.range_max):
+        if not (max(msg.range_min, BODY_CLEARANCE) < r < msg.range_max):
             continue
         angle = angle_min_deg + i * angle_inc_deg
         # Normalise to [-180, 180]
@@ -68,7 +69,7 @@ def _sector_avg(msg: LaserScan, start_deg: float, end_deg: float) -> float:
     for i, r in enumerate(msg.ranges):
         if math.isnan(r) or math.isinf(r):
             continue
-        if not (msg.range_min < r < msg.range_max):
+        if not (max(msg.range_min, BODY_CLEARANCE) < r < msg.range_max):
             continue
         angle = angle_min_deg + i * angle_inc_deg
         while angle >  180.0: angle -= 360.0
