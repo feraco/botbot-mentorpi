@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import * as ROSLIB from 'roslib';
 import { ROSTopicFactory } from '@/utils/ros/topics-and-services';
 import { useRobotConnection } from '@/contexts/RobotConnectionContext';
 import { Odometry } from '@/interfaces/ros/Odometry';
 import { Pose, Vector3 } from 'roslib';
 
-export default function useOdometry(useDummy: boolean = false): Odometry {
+export default function useOdometry(useDummy: boolean = false, topicName?: string): Odometry {
   const { connection } = useRobotConnection();
 
   const [odometry, setOdometry] = useState<Odometry>({
@@ -35,62 +36,49 @@ export default function useOdometry(useDummy: boolean = false): Odometry {
   useEffect(() => {
     if (!connection.ros || !connection.online) return;
 
-    // Debug logs to verify connection
-    console.debug('Setting up odometry subscription, connection:', 
-      connection.online ? 'online' : 'offline');
+    const handleMsg = (msg: unknown) => {
+      const o = msg as Odometry;
+      if (o?.pose?.pose) {
+        const { position, orientation } = o.pose.pose;
+        if (position && orientation &&
+            typeof position.x === 'number' && typeof position.y === 'number' &&
+            typeof orientation.w === 'number') {
+          setOdometry(o);
+        }
+      }
+    };
+
+    // If a specific topic name is provided (e.g. from the robot profile), use it directly.
+    if (topicName) {
+      const topic = new ROSLIB.Topic({
+        ros: connection.ros,
+        name: topicName,
+        messageType: 'nav_msgs/Odometry',
+        compression: 'cbor',
+        throttle_rate: 0,
+        queue_size: 1,
+      });
+      topic.subscribe(handleMsg);
+      return () => topic.unsubscribe();
+    }
 
     const topicFactory: ROSTopicFactory = new ROSTopicFactory(
       connection.ros,
       useDummy
     );
-    
+
     try {
       const odometryTopic = topicFactory.createAndSubscribeTopic<Odometry>(
         'odometry',
-        (msg) => {
-          // Validate odometry data before updating state
-          if (msg && msg.pose && msg.pose.pose) {
-            const { position, orientation } = msg.pose.pose;
-            
-            // Basic validation to ensure data integrity
-            if (position && orientation && 
-                typeof position.x === 'number' && 
-                typeof position.y === 'number' && 
-                typeof position.z === 'number' &&
-                typeof orientation.x === 'number' && 
-                typeof orientation.y === 'number' && 
-                typeof orientation.z === 'number' && 
-                typeof orientation.w === 'number') {
-              
-              // Log the first few messages to help debugging
-              if (msg.header.seq < 5) {
-                console.debug('Odometry data received:', {
-                  seq: msg.header.seq,
-                  position: `x: ${position.x.toFixed(2)}, y: ${position.y.toFixed(2)}, z: ${position.z.toFixed(2)}`,
-                });
-              }
-              
-              // Set the odometry state with valid data
-              setOdometry(msg);
-            } else {
-              console.warn('Received invalid odometry data (NaN or missing fields):', msg);
-            }
-          } else {
-            console.warn('Received malformed odometry message:', msg);
-          }
-        }
+        handleMsg
       );
 
-      // Cleanup: unsubscribe from the topic when the component is unmounted or the connection changes
-      return () => {
-        console.debug('Unsubscribing from odometry topic');
-        odometryTopic.unsubscribe();
-      };
+      return () => odometryTopic.unsubscribe();
     } catch (error) {
       console.error('Error setting up odometry subscription:', error);
-      return () => {}; // Return empty cleanup function
+      return () => {};
     }
-  }, [connection.ros, connection.online, useDummy]);
+  }, [connection.ros, connection.online, useDummy, topicName]);
 
   return odometry;
 }

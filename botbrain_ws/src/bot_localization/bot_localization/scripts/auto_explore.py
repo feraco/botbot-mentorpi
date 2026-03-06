@@ -18,7 +18,6 @@ import os
 import sys
 import math
 import yaml
-import random
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -27,12 +26,12 @@ from std_srvs.srv import SetBool
 
 
 # ─────────────────────────── Tuning constants ────────────────────────────── #
-FORWARD_SPEED      = 0.20   # m/s  — linear speed when moving forward
-ROTATE_SPEED       = 0.90   # rad/s — rotation speed when avoiding obstacle
-SAFETY_DISTANCE    = 0.55   # m    — front clearance threshold to trigger avoidance
-FRONT_HALF_ANG_DEG = 30     # °    — half-width of the "front" detection sector
-SIDE_HALF_ANG_DEG  = 60     # °    — half-width used to compare left vs right openness
-ROTATE_DURATION    = 1.8    # s    — base time to rotate (randomised ±30 % to avoid loops)
+FORWARD_SPEED       = 0.30   # m/s  — linear speed when moving forward
+ROTATE_SPEED        = 1.20   # rad/s — rotation speed when turning to avoid obstacle
+SAFETY_DISTANCE     = 0.45   # m    — front clearance to trigger avoidance
+FRONT_HALF_ANG_DEG  = 30     # °    — half-width of the "front" detection cone
+MIN_ROTATE_TIME     = 0.4    # s    — minimum rotation before checking if path is clear
+MAX_ROTATE_TIME     = 5.0    # s    — give up on a direction and re-choose after this long
 # ─────────────────────────────────────────────────────────────────────────── #
 
 
@@ -61,6 +60,24 @@ def _sector_min(msg: LaserScan, start_deg: float, end_deg: float) -> float:
     return min(valid) if valid else float('inf')
 
 
+def _sector_avg(msg: LaserScan, start_deg: float, end_deg: float) -> float:
+    """Return the average valid range in a sector. Used to find the most open direction."""
+    angle_min_deg = math.degrees(msg.angle_min)
+    angle_inc_deg = math.degrees(msg.angle_increment)
+    valid = []
+    for i, r in enumerate(msg.ranges):
+        if math.isnan(r) or math.isinf(r):
+            continue
+        if not (msg.range_min < r < msg.range_max):
+            continue
+        angle = angle_min_deg + i * angle_inc_deg
+        while angle >  180.0: angle -= 360.0
+        while angle < -180.0: angle += 360.0
+        if start_deg <= angle <= end_deg:
+            valid.append(r)
+    return sum(valid) / len(valid) if valid else 0.0
+
+
 class AutoExplore(Node):
     """Autonomous exploration node — toggle on/off via SetBool service."""
 
@@ -73,7 +90,8 @@ class AutoExplore(Node):
         self._last_scan: LaserScan | None = None
         self._state             = 'forward'    # 'forward' | 'rotating'
         self._rotate_dir        = 1.0          # +1 = left  (CCW),  -1 = right (CW)
-        self._rotate_deadline   = 0.0          # absolute timestamp (seconds)
+        self._rotate_start      = 0.0          # when current rotation began
+        self._rotate_deadline   = 0.0          # max time for current rotation
 
         # ROS interfaces
         self._cmd_pub = self.create_publisher(
@@ -109,47 +127,62 @@ class AutoExplore(Node):
 
     # ──────────────────────── Control loop ─────────────────────────────── #
 
+    def _best_direction(self, msg: LaserScan) -> float:
+        """Return +1 (left/CCW) or -1 (right/CW) toward the most open quadrant."""
+        # Sample average range in four quadrants: left, right, back-left, back-right
+        left       = _sector_avg(msg,  30.0,  90.0)
+        right      = _sector_avg(msg, -90.0, -30.0)
+        back_left  = _sector_avg(msg,  90.0, 170.0)
+        back_right = _sector_avg(msg, -170.0, -90.0)
+
+        # Prefer forward-adjacent sides; use back only as tiebreak
+        left_score  = left  + 0.5 * back_left
+        right_score = right + 0.5 * back_right
+
+        return 1.0 if left_score >= right_score else -1.0
+
     def _loop(self):
         if not self._active or self._last_scan is None:
             return
 
-        msg  = self._last_scan
-        now  = self.get_clock().now().nanoseconds * 1e-9
+        msg = self._last_scan
+        now = self.get_clock().now().nanoseconds * 1e-9
 
         front = _sector_min(msg, -FRONT_HALF_ANG_DEG, FRONT_HALF_ANG_DEG)
-        left  = _sector_min(msg,  FRONT_HALF_ANG_DEG, FRONT_HALF_ANG_DEG + SIDE_HALF_ANG_DEG)
-        right = _sector_min(msg, -FRONT_HALF_ANG_DEG - SIDE_HALF_ANG_DEG, -FRONT_HALF_ANG_DEG)
 
         twist = Twist()
 
         if self._state == 'forward':
             if front < SAFETY_DISTANCE:
-                # Obstacle: choose roomier side; add small random jitter to avoid deadlocks
-                self._rotate_dir = 1.0 if left >= right else -1.0
-                jitter = random.uniform(0.7, 1.3)
-                self._rotate_deadline = now + ROTATE_DURATION * jitter
+                # Obstacle ahead — pick the most open direction and start rotating
+                self._rotate_dir      = self._best_direction(msg)
+                self._rotate_start    = now
+                self._rotate_deadline = now + MAX_ROTATE_TIME
                 self._state = 'rotating'
                 self.get_logger().info(
                     f'Obstacle at {front:.2f} m — rotating '
-                    f'{"left" if self._rotate_dir > 0 else "right"} '
-                    f'(L={left:.2f} R={right:.2f})')
+                    f'{"left" if self._rotate_dir > 0 else "right"}')
             else:
                 twist.linear.x = FORWARD_SPEED
 
         elif self._state == 'rotating':
-            if now >= self._rotate_deadline:
-                # Finished rotating — recheck before advancing
-                if front >= SAFETY_DISTANCE:
-                    self._state = 'forward'
-                    self.get_logger().info('Path clear — resuming forward')
-                else:
-                    # Still blocked: choose again and keep rotating
-                    self._rotate_dir = 1.0 if left >= right else -1.0
-                    jitter = random.uniform(0.7, 1.3)
-                    self._rotate_deadline = now + ROTATE_DURATION * jitter
-                    self.get_logger().info(
-                        f'Still blocked ({front:.2f} m) — rotating '
-                        f'{"left" if self._rotate_dir > 0 else "right"}')
+            elapsed = now - self._rotate_start
+
+            # Path is clear AND we've rotated at least MIN_ROTATE_TIME → drive
+            if elapsed >= MIN_ROTATE_TIME and front >= SAFETY_DISTANCE:
+                self._state = 'forward'
+                self.get_logger().info(f'Path clear ({front:.2f} m) — driving forward')
+
+            # Rotation timed out without finding a clear path → pick a new direction
+            elif now >= self._rotate_deadline:
+                self._rotate_dir      = self._best_direction(msg)
+                self._rotate_start    = now
+                self._rotate_deadline = now + MAX_ROTATE_TIME
+                self.get_logger().info(
+                    f'Rotation timeout — still blocked ({front:.2f} m), '
+                    f'switching to {"left" if self._rotate_dir > 0 else "right"}')
+                twist.angular.z = self._rotate_dir * ROTATE_SPEED
+
             else:
                 twist.angular.z = self._rotate_dir * ROTATE_SPEED
 

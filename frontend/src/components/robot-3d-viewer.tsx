@@ -10,6 +10,8 @@ import useLaserScan from '@/hooks/ros/useLaserScan';
 import useJointState from '@/hooks/ros/useJointState';
 import useOdometry from '@/hooks/ros/useOdometry';
 import { useRobotConnection } from '@/contexts/RobotConnectionContext';
+import { useRobotProfile } from '@/contexts/RobotProfileContext';
+import { getRosTopic } from '@/utils/ros/topics-and-services-v2';
 
 const showAxis = false;
 
@@ -614,7 +616,9 @@ export function Robot3DViewer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const laserScan = useLaserScan();
   const jointState = useJointState();
-  const odometry = useOdometry();
+  const { currentProfile } = useRobotProfile();
+  const odomTopic = getRosTopic('odometry', currentProfile);
+  const odometry = useOdometry(false, odomTopic);
   const { connection } = useRobotConnection();
 
   // Initialize viewer once on mount
