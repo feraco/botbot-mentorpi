@@ -28,9 +28,10 @@ export function useRosMappingServices() {
   const servicesRef = useRef<{ [key: string]: ROSLIB.Service<unknown, unknown> }>({});
 
   // Build the rtab_manager service prefix based on the robot's ROS namespace
+  // Services are registered under the namespace directly (e.g. /robotdog/get_current_database)
   const rtabPrefix = currentProfile?.rosNamespace
-    ? `/${currentProfile.rosNamespace}/rtab_manager`
-    : '/rtab_manager';
+    ? `/${currentProfile.rosNamespace}`
+    : '';
 
   const addNotification = useCallback((notification: { type: 'success' | 'error' | 'info' | 'warning'; title: string; message: string }) => {
     dispatch({
@@ -64,8 +65,10 @@ export function useRosMappingServices() {
 
       return new Promise((resolve, reject) => {
         const request = {};
+        const timeoutId = setTimeout(() => reject(new Error('list_db_files service call timed out')), 10000);
 
         service.callService(request, (res: unknown) => {
+          clearTimeout(timeoutId);
           const response = res as ServiceResponse;
           if (response.success) {
             resolve(response.db_files || []);
@@ -73,6 +76,7 @@ export function useRosMappingServices() {
             reject(new Error(response.message || 'Failed to list database files'));
           }
         }, (error: unknown) => {
+          clearTimeout(timeoutId);
           reject(new Error(String(error)));
         });
       });
@@ -289,7 +293,9 @@ export function useRosMappingServices() {
       );
 
       return new Promise((resolve) => {
+        const timeoutId = setTimeout(() => resolve(null), 10000);
         service.callService({}, (res: unknown) => {
+          clearTimeout(timeoutId);
           const response = res as { success: boolean; message: string };
           if (response.success) {
             // message contains the database name/path
@@ -298,6 +304,7 @@ export function useRosMappingServices() {
             resolve(null); // No active database, not an error
           }
         }, (error: unknown) => {
+          clearTimeout(timeoutId);
           // Service unavailable - resolve null (no active map)
           console.warn('get_current_database service unavailable:', error);
           resolve(null);
