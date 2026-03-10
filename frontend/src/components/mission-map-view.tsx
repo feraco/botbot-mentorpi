@@ -2,10 +2,12 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useRobotConnection } from '@/contexts/RobotConnectionContext';
+import { useRobotProfile } from '@/contexts/RobotProfileContext';
 import { MapPin, Map as MapIcon, ZoomIn, ZoomOut, RotateCcw, Navigation, Square, Trash2, Play, Route, X, RefreshCw, Layers } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useNotifications } from '@/contexts/NotificationsContext';
 import useOccupancyGrid from '@/hooks/ros/useOccupancyGrid';
+import { getRosTopic } from '@/utils/ros/topics-and-services-v2';
 import useMapPose from '@/hooks/ros/useMapPose';
 import useFollowWaypoints from '@/hooks/ros/useFollowWaypoints';
 import useRosNavPlan from '@/hooks/ros/useRosNavPlan';
@@ -45,13 +47,14 @@ export default function MissionMapView({
   showNavPlan = false
 }: MissionMapViewProps) {
   const { connection } = useRobotConnection();
+  const { currentProfile } = useRobotProfile();
   const { t } = useLanguage();
   const { dispatch: notificationDispatch } = useNotifications();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number | undefined>(undefined);
-  const mapTopic = '/map';
-  const { occupancyGrid, isLoading, error, retry } = useOccupancyGrid({ topicName: mapTopic });
+  const mapTopic = getRosTopic('map', currentProfile);
+  const { occupancyGrid, isLoading, error, retry } = useOccupancyGrid({ topicName: mapTopic, enabled: !!currentProfile });
   
   // Get robot position in map frame
   const robotPose = useMapPose();
