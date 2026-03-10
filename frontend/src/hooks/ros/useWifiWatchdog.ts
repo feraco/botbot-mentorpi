@@ -45,15 +45,15 @@ export function useWifiWatchdog() {
             resolve(null);
           }, 2000); // 2 second timeout per parameter
 
-          param.get((value: any) => {
+          param.get((value: unknown) => {
             clearTimeout(timeoutId);
 
             // Don't try to parse the value, just use it directly
             // ROSLIB already handles JSON parsing internally
             if (value !== null && value !== undefined && value !== '') {
-              params[paramName as keyof WifiWatchdogParams] = value;
+              params[paramName as keyof WifiWatchdogParams] = value as never;
             }
-            resolve(value);
+            resolve(value as string);
           });
         });
       }
