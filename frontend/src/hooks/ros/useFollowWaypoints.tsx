@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useRobotConnection } from '@/contexts/RobotConnectionContext';
+import { useRobotProfile } from '@/contexts/RobotProfileContext';
 import * as ROSLIB from 'roslib';
 
 // ============ Nav2 Message Types ============
@@ -112,7 +113,6 @@ const DEFAULT_CONFIG: NavigationConfig = {
   stopOnFailure: false,
 };
 
-const FOLLOW_WAYPOINTS_ACTION = '/follow_waypoints';
 const FOLLOW_WAYPOINTS_ACTION_TYPE = 'nav2_msgs/action/FollowWaypoints';
 
 // ============ Helper Functions ============
@@ -152,6 +152,10 @@ function yawToQuaternion(theta: number): { x: number; y: number; z: number; w: n
  */
 export default function useFollowWaypoints(): UseFollowWaypointsReturn {
   const { connection } = useRobotConnection();
+  const { currentProfile } = useRobotProfile();
+  const followWaypointsAction = currentProfile?.rosNamespace
+    ? `/${currentProfile.rosNamespace}/follow_waypoints`
+    : '/follow_waypoints';
 
   // State
   const [status, setStatus] = useState<NavigationStatus>('idle');
@@ -189,11 +193,11 @@ export default function useFollowWaypoints(): UseFollowWaypointsReturn {
       // Create ROS2 Action client for FollowWaypoints (roslib 2.x API)
       actionRef.current = new ROSLIB.Action({
         ros: connection.ros,
-        name: FOLLOW_WAYPOINTS_ACTION,
+        name: followWaypointsAction,
         actionType: FOLLOW_WAYPOINTS_ACTION_TYPE,
       });
 
-      console.log('[FollowWaypoints] ROS2 Action client initialized for', FOLLOW_WAYPOINTS_ACTION);
+      console.log('[FollowWaypoints] ROS2 Action client initialized for', followWaypointsAction);
       setIsConnected(true);
       setIsActionServerAvailable(true);
       setStatus(prev => prev === 'idle' ? 'ready' : prev);
@@ -215,7 +219,7 @@ export default function useFollowWaypoints(): UseFollowWaypointsReturn {
         currentGoalIdRef.current = null;
       }
     };
-  }, [connection.ros, connection.online]);
+  }, [connection.ros, connection.online, followWaypointsAction]);
 
   // Elapsed time updater
   useEffect(() => {
@@ -413,7 +417,7 @@ export default function useFollowWaypoints(): UseFollowWaypointsReturn {
     };
 
     // Send the goal using roslib 2.x API
-    console.log('[FollowWaypoints] Sending goal to', FOLLOW_WAYPOINTS_ACTION);
+    console.log('[FollowWaypoints] Sending goal to', followWaypointsAction);
     const goalId = actionRef.current.sendGoal(
       goalMessage,
       resultCallback,
