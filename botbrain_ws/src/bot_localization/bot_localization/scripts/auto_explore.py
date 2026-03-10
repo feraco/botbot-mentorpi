@@ -26,12 +26,15 @@ from std_srvs.srv import SetBool
 
 
 # ─────────────────────────── Tuning constants ────────────────────────────── #
-FORWARD_SPEED       = 0.30   # m/s  — linear speed when moving forward
-ROTATE_SPEED        = 1.20   # rad/s — rotation speed when turning to avoid obstacle
-SAFETY_DISTANCE     = 0.45   # m    — front clearance to trigger avoidance
+FORWARD_SPEED       = 0.45   # m/s  — linear speed when moving forward
+ROTATE_SPEED        = 1.30   # rad/s — rotation speed when turning to avoid obstacle
+BACKUP_SPEED        = 0.15   # m/s  — reverse speed during corner recovery
+SAFETY_DISTANCE     = 0.38   # m    — front clearance to trigger avoidance
 FRONT_HALF_ANG_DEG  = 30     # °    — half-width of the "front" detection cone
-MIN_ROTATE_TIME     = 0.4    # s    — minimum rotation before checking if path is clear
-MAX_ROTATE_TIME     = 5.0    # s    — give up on a direction and re-choose after this long
+MIN_ROTATE_TIME     = 0.35   # s    — minimum rotation before checking if path is clear
+MAX_ROTATE_TIME     = 3.5    # s    — give up on a direction and try backup recovery
+BACKUP_TIME         = 1.2    # s    — how long to back up when cornered
+MIN_FORWARD_TIME    = 0.4    # s    — minimum forward drive time (avoids micro-moves)
 BODY_CLEARANCE      = 0.12   # m    — ignore readings closer than this (robot's own chassis)
 # ─────────────────────────────────────────────────────────────────────────── #
 
@@ -89,10 +92,14 @@ class AutoExplore(Node):
 
         self._active            = False
         self._last_scan: LaserScan | None = None
-        self._state             = 'forward'    # 'forward' | 'rotating'
+        self._state             = 'forward'    # 'forward' | 'rotating' | 'backing'
         self._rotate_dir        = 1.0          # +1 = left  (CCW),  -1 = right (CW)
         self._rotate_start      = 0.0          # when current rotation began
         self._rotate_deadline   = 0.0          # max time for current rotation
+        self._backup_start      = 0.0          # when backup began
+        self._backup_end        = 0.0          # when backup should end
+        self._forward_start     = 0.0          # when forward motion began
+        self._stuck_count       = 0            # consecutive rotation timeouts
 
         # ROS interfaces
         self._cmd_pub = self.create_publisher(
@@ -117,6 +124,7 @@ class AutoExplore(Node):
         if not self._active:
             self._stop()
             self._state = 'forward'
+            self._stuck_count = 0
         action = 'started' if self._active else 'stopped'
         res.success = True
         res.message = f'Exploration {action}'
@@ -154,8 +162,10 @@ class AutoExplore(Node):
         twist = Twist()
 
         if self._state == 'forward':
-            if front < SAFETY_DISTANCE:
+            fwd_elapsed = now - self._forward_start
+            if front < SAFETY_DISTANCE and fwd_elapsed >= MIN_FORWARD_TIME:
                 # Obstacle ahead — pick the most open direction and start rotating
+                self._stuck_count     = 0
                 self._rotate_dir      = self._best_direction(msg)
                 self._rotate_start    = now
                 self._rotate_deadline = now + MAX_ROTATE_TIME
@@ -171,21 +181,37 @@ class AutoExplore(Node):
 
             # Path is clear AND we've rotated at least MIN_ROTATE_TIME → drive
             if elapsed >= MIN_ROTATE_TIME and front >= SAFETY_DISTANCE:
+                self._stuck_count  = 0
+                self._forward_start = now
                 self._state = 'forward'
                 self.get_logger().info(f'Path clear ({front:.2f} m) — driving forward')
 
-            # Rotation timed out without finding a clear path → pick a new direction
+            # Rotation timed out — back up to escape the corner
             elif now >= self._rotate_deadline:
-                self._rotate_dir      = self._best_direction(msg)
-                self._rotate_start    = now
-                self._rotate_deadline = now + MAX_ROTATE_TIME
+                self._stuck_count += 1
+                self._backup_start = now
+                self._state = 'backing'
+                extra = min(self._stuck_count - 1, 3) * 0.5  # longer back-up when repeatedly stuck
+                self._backup_end = now + BACKUP_TIME + extra
                 self.get_logger().info(
-                    f'Rotation timeout — still blocked ({front:.2f} m), '
-                    f'switching to {"left" if self._rotate_dir > 0 else "right"}')
-                twist.angular.z = self._rotate_dir * ROTATE_SPEED
+                    f'Corner detected ({front:.2f} m, stuck×{self._stuck_count}) — backing up '
+                    f'{BACKUP_TIME + extra:.1f}s')
+                twist.linear.x = -BACKUP_SPEED
 
             else:
                 twist.angular.z = self._rotate_dir * ROTATE_SPEED
+
+        elif self._state == 'backing':
+            if now >= self._backup_end:
+                # Backup done — choose best direction and spin out
+                self._rotate_dir      = self._best_direction(msg)
+                self._rotate_start    = now
+                self._rotate_deadline = now + MAX_ROTATE_TIME
+                self._state = 'rotating'
+                self.get_logger().info(
+                    f'Backup done — rotating {"left" if self._rotate_dir > 0 else "right"}')
+            else:
+                twist.linear.x = -BACKUP_SPEED
 
         self._cmd_pub.publish(twist)
 
