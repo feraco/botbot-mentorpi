@@ -71,6 +71,37 @@ export default function Missions() {
     isRobotConnected
   } = useMapMissionCompatibility(selectedMission?.map_name || null);
   const [isSwitchingMap, setIsSwitchingMap] = useState(false);
+  const [isReassigningMap, setIsReassigningMap] = useState(false);
+
+  const reassignMap = async () => {
+    if (!selectedMission || !rosConnected) return;
+    setIsReassigningMap(true);
+    try {
+      const mapName = await getCurrentDatabase();
+      const updated = await missionsService.updateMission(selectedMission.id, { map_name: mapName });
+      const newMapName = updated.map_name ?? null;
+      setMissions(missions.map(m => m.id === selectedMission.id ? { ...m, map_name: newMapName } : m));
+      setSelectedMission({ ...selectedMission, map_name: newMapName });
+      notificationDispatch({
+        type: 'ADD_NOTIFICATION',
+        payload: {
+          type: 'success',
+          title: 'Map reassigned',
+          message: newMapName
+            ? `Mission now uses map: ${newMapName.replace(/\.db$/i, '').replace(/_/g, ' ')}`
+            : 'Map assignment cleared'
+        }
+      });
+    } catch (error) {
+      console.error('Failed to reassign map:', error);
+      notificationDispatch({
+        type: 'ADD_NOTIFICATION',
+        payload: { type: 'error', title: 'Failed to reassign map', message: 'Please try again' }
+      });
+    } finally {
+      setIsReassigningMap(false);
+    }
+  };
 
   const handleSwitchMap = async () => {
     setIsSwitchingMap(true);
@@ -872,6 +903,15 @@ export default function Missions() {
                       >
                         <Route className="w-3 h-3" />
                         Nav Plan
+                      </button>
+                      <button
+                        onClick={reassignMap}
+                        disabled={isReassigningMap || !rosConnected}
+                        className="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white rounded-md transition-colors text-sm font-medium flex items-center gap-1"
+                        title={rosConnected ? 'Reassign this mission to the currently loaded map' : 'Connect to robot first'}
+                      >
+                        {isReassigningMap ? <Loader2 className="w-3 h-3 animate-spin" /> : <MapIcon className="w-3 h-3" />}
+                        Reassign Map
                       </button>
                       {isSaving && (
                         <span className="text-xs text-gray-500 dark:text-gray-400 mr-2">
